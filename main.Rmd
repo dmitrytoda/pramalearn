@@ -1,0 +1,64 @@
+---
+title: "Movement correctness classification"
+author: "DD"
+date: "2020/10/26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Get data and transform
+
+I load the data, remove all the rows with new_window=yes, remove all the columns that are pure NA or empty, and remove the first 7 columns that contain row ID, subject name etc and cannot be used for classification. This is the small tidy data set that I split into into training and test. The test data set provided by the course instructors (called unknown here cuz we don't know the labels) already has no new_window=yes rows, so I just filter the same columns we had left in small. See the appendix as to why such a transformation.
+
+```{r load_clean_split}
+all_data <- read.csv('pml-training.csv')
+unknown <- read.csv('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv')
+library(caret)
+library(dplyr)
+set.seed(3456)
+small <- filter(all_data, new_window=='no')
+small <- small[,colSums(is.na(small))<nrow(small)]
+small <- small[,colSums(small != "") != 0]
+small <- small[,8:60]
+cols <- names(small)
+unk_small <- unknown[ ,which((names(unknown) %in% cols)==TRUE)]
+
+trainIndex <- createDataPartition(small$classe, p=.7, list = FALSE)
+train <- small[trainIndex,]
+test <- small[-trainIndex,]
+```
+
+The most obvious idea is to fit a model, e.g. random forest, that predicts classe based on all remaning variables. This is what I do here. It takes a while to train.
+```{r training, cache=TRUE}
+fit_all <- train(classe ~ ., data=train, method='rf')
+```
+
+## Prediction accuracy
+
+```{r train_accuracy}
+p1 <- predict(fit_all, train[,-53])
+confusionMatrix(p1, train[,53])$overall["Accuracy"]
+```
+Wow an accuracy of 1, that's confusing. It is the training set though, maybe we are overfitting. Let's see the self-produced test set.
+
+```{r test_accuracy}
+p2 <- predict(fit_all, test[,-53])
+confusionMatrix(p2, test[,53])$overall["Accuracy"]
+```
+Interestingly, the accuracy on the test set is 99%. Not bad either. Expected out of sample error is less than 1%. Now let's predict the 20 unknown cases for the quiz.
+
+```{r quiz}
+p3 <- predict(fit_all, unk_small)
+p3
+```
+
+Spoiler: the answers turned out to be correct, so my quick (in coding, but not in training time) and dirty model does actually work quite alright. Of course we could do fancy things like PCA or trying to locate the "important" features, but why bother if it is working already.
+
+## Appendix - why remove some rows and columns
+
+When exploring the data with View() function, I noticed a pattern: most features would be blank or NA for all rows except those that have new_window=yes. Namely, the new_window=no rows will only have the three angles (roll/pitch/yaw) and the nine raw measurements (x/y/z X accel/gyro/magnet) filled in for each sensor (belt, arm etc). It would be logical to assume that new_window=yes rows represent some aggregate values (as only they have max/min/variance etc), but a simple test shows that for example, for window 12 the max_roll_belt in the new_window=yes row is -94.3, but the actual max roll belt in other rows of that window is 1.6. At the same time, max yaw belt is exacly -94.3, so it seems those columns have been mixed up in some way.
+
+Those aggregate values are not of much help if the columns are mixed up (I could match roll with yaw, but not others), and also the 20 quiz questions do not have any of those aggregate rows. So removing them won't change much, and then removing all the empty columns is an obivous next step.
